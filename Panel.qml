@@ -152,7 +152,7 @@ Panel {
   implicitHeight: button.implicitHeight
 
   function providerName(id) {
-    var names = { "openai-codex": "Codex", "anthropic": "Claude", "cursor": "Cursor" }
+    var names = { "openai-codex": "Codex", "anthropic": "Claude", "cursor": "Cursor", "openrouter": "OpenRouter" }
     if (names[id]) return names[id]
     // Same title-casing OMP itself uses for provider ids ("github-copilot" -> "Github Copilot").
     return String(id || "Unknown provider").split(/[-_]/).map(function(part) {
@@ -317,6 +317,8 @@ Panel {
     + "if [ \"$1\" = --all ]; then omp usage --json > \"$tmp/0\" &\n"
     + "else i=0; for p in \"$@\"; do i=$((i+1)); omp usage --json --provider \"$p\" > \"$tmp/$i\" & done; fi\n"
     + "omp usage --history --json --days 1 > \"$tmp/h\" &\n"
+    // OpenRouter credits: no `omp usage` endpoint, so a separate read (openrouter.py).
+    + "python3 " + Qt.resolvedUrl("openrouter.py").toString().replace(/^file:\/\//, "") + " > \"$tmp/o\" &\n"
     + "wait\n"
     + "for f in \"$tmp\"/*; do cat \"$f\"; printf '\\036'; done\n"
 
@@ -478,8 +480,10 @@ Panel {
       lastFullAt = request.startedAt
       var seen = {}
       var ids = []
+      // openrouter.py reports OpenRouter on every pass; `omp usage --provider
+      // openrouter` would only add a "no usage" placeholder for the same account.
       for (var m = 0; m < merged.length; m++)
-        if (!merged[m].noUsage && !seen[merged[m].provider]) { seen[merged[m].provider] = true; ids.push(merged[m].provider) }
+        if (!merged[m].noUsage && merged[m].provider !== "openrouter" && !seen[merged[m].provider]) { seen[merged[m].provider] = true; ids.push(merged[m].provider) }
       knownProviders = ids
     }
     scheduleSlowProviders(request, incoming)
@@ -687,12 +691,16 @@ Panel {
       readonly property color primaryColor: primary && (primary.alarming || root.hiddenAlarm) ? button.activeColor : lit
       readonly property color secondaryColor: secondary && (secondary.alarming || root.hiddenAlarm) ? button.activeColor : lit
 
-      // Laid out in physical pixels (u) so fractional display scaling keeps
-      // segments even: 3px wide, 1px apart, bars 3/5/7/9px tall, 3px squares,
-      // 3px between rows, 1px corner radius. Centered in the icon canvas.
+      // Laid out in whole physical pixels (u) so fractional display scaling
+      // keeps segments even: 3u wide, 1u apart, bars 3/5/7/9u tall, 3u
+      // squares, 3u between rows, 1u corner radius. Centered in the icon
+      // canvas. u is the largest whole number of physical pixels that still
+      // fits the 15u-wide glyph into the canvas: one pixel at 1x and on
+      // fractional outputs, two at 2x, so the icon keeps its logical size.
       // Window ratio, not Screen: Wayland reports Screen at the rounded-up
       // integer scale (2 on a 1.25x output).
-      readonly property real u: 1 / Math.max(1, Window.window ? Window.window.devicePixelRatio : 1)
+      readonly property real dpr: Math.max(1, Window.window ? Window.window.devicePixelRatio : 1)
+      readonly property real u: Math.max(1, Math.floor(Math.min(width, height) * dpr / 17)) / dpr
       readonly property real contentWidth: 15 * u
       readonly property real contentHeight: (secondary ? 15 : 9) * u
       readonly property real originX: (width - contentWidth) / 2
